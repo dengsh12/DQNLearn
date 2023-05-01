@@ -67,7 +67,7 @@ GAMMA = 0.99
 EPS_START = 0.9
 EPS_END = 0.05
 EPS_DECAY = 1000
-TAU = 0.005
+TAU = 1
 LR = 1e-4
 
 # Get number of actions from gym action space
@@ -81,7 +81,7 @@ target_net = DQN(n_observations, n_actions).to(device)
 target_net.load_state_dict(policy_net.state_dict())
 
 optimizer = optim.AdamW(policy_net.parameters(), lr=LR, amsgrad=True)
-memory = ReplayMemory(10000)
+memory = ReplayMemory(10240)
 
 
 steps_done = 0
@@ -162,6 +162,7 @@ def optimize_model():
     # state value or 0 in case the state was final.
     next_state_values = torch.zeros(BATCH_SIZE, device=device)
     with torch.no_grad():
+        # todo : figure out the grammar
         next_state_values[non_final_mask] = target_net(non_final_next_states).max(1)[0]
     # Compute the expected Q values
     expected_state_action_values = (next_state_values * GAMMA) + reward_batch
@@ -174,14 +175,16 @@ def optimize_model():
     optimizer.zero_grad()
     loss.backward()
     # In-place gradient clipping
-    torch.nn.utils.clip_grad_value_(policy_net.parameters(), 100)
+    torch.nn.utils.clip_grad_norm_(policy_net.parameters(), 100)
     optimizer.step()
 
 if torch.cuda.is_available():
     num_episodes = 600
 else:
-    num_episodes = 50
+    num_episodes = 1000
 
+acc_amount = 0
+update_interval = 256
 for i_episode in range(num_episodes):
     # Initialize the environment and get it's state
     state, info = env.reset()
@@ -208,15 +211,18 @@ for i_episode in range(num_episodes):
 
         # Soft update of the target network's weights
         # θ′ ← τ θ + (1 −τ )θ′
-        target_net_state_dict = target_net.state_dict()
-        policy_net_state_dict = policy_net.state_dict()
-        for key in policy_net_state_dict:
-            target_net_state_dict[key] = policy_net_state_dict[key]*TAU + target_net_state_dict[key]*(1-TAU)
-        target_net.load_state_dict(target_net_state_dict)
+        acc_amount += 1
+        if acc_amount % update_interval == 0:
+            target_net_state_dict = target_net.state_dict()
+            policy_net_state_dict = policy_net.state_dict()
+            for key in policy_net_state_dict:
+                target_net_state_dict[key] = policy_net_state_dict[key] * TAU + target_net_state_dict[key] * (1 - TAU)
+            target_net.load_state_dict(target_net_state_dict)
 
         if done:
             episode_durations.append(t + 1)
-            plot_durations()
+            if i_episode % 200 == 0:
+                plot_durations()
             break
 
 print('Complete')
